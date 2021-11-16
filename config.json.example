@@ -1,0 +1,10 @@
+{
+    "download_dir": "/mnt/local",
+    "log_file": "/opt/qtpy/activity.log",
+    "min_free_gb": 100,
+	"qbit": {
+		"host": "qbittorrent.mydomain.com",
+		"user": "myuser",
+		"password": "mypassword"
+	}
+}
