@@ -5,6 +5,7 @@ Scrappy little python utility for performing some operations on qbittorrent serv
  * Force a reannounce for any torrent without a listed tracker.
  * Pause in progress torrents if they would fill the disk.
  * [optional] Resume incomplete torrents if there is space available.
+ * [optional] Add tags based on tracker info
 
 ## usage
 
@@ -20,6 +21,8 @@ The autoresume is off by default but can be enabled by including the additional 
 ```
 	--auto-resume
 ```
+
+This can also be set in the config file.
 
 ## cron
 

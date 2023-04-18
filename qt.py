@@ -2,14 +2,14 @@
 """
 Script to monitor and tweak stuff in qbittorrent.
 
-It reannounces torrents with no tracker registered.
+This will tag torrents based on the tracker. If no tracker
+is found then it will force a reannounce for that torrent.
 
-It checks incomplete torrents against the free disk
-space and pauses torrents to ensure the disk space
-will not be filled up.
-
-It can optionally autoresume paused torrents if disk
-space is available.
+It also monitors disk free space and incomplete torrents
+and pauses/resumes them as required to ensure the disk
+doesn't fill up. Note that it doesn't take into account
+whether a torrent is stalled or not so stalled downloads
+could result in things getting stuck.
 """
 
 import argparse
@@ -65,6 +65,15 @@ def resume(torrent, qbt_client):
     qbt_client.torrents_reannounce(torrent_hashes=torrent.hash)
 
 
+def set_category(torrent, category, qbt_client):
+    """set the category for a torrent"""
+    logging.info('category %s -> %s (%s) - %s: %s',
+                 torrent.category, category,
+                 torrent.tags,
+                 torrent.hash[-6:], {torrent.name})
+    qbt_client.torrents_set_category(category=category, torrent_hashes=torrent.hash)
+
+
 def contains(string, regex):
     """check if a string contains a regex"""
     return re.compile(regex).search(string)
@@ -94,27 +103,27 @@ def check_all_incomplete(incomplete, qbt_client, params):
             total_active = total_active + inc.amount_left
             active.append(inc)
 
+    total_left = total_paused + total_active
 
     # Get free space and adjust for the min free space (GB)
     free = free_space(params["download_dir"])
     free = free - (params["min_free_gb"] * 1024 * 1024 * 1024)
 
-    # Optionally autoresume torrents if there is space available
-    if params["autoresume"]:
-        # If the total of incomplete torrents is less than free space
-        # then we can resume them all happily
-        total_left = total_paused + total_active
-        if total_left < free:
+    # If the total of incomplete torrents is less than free space
+    # then we can resume them all happily
+    if total_left < free:
+        if params["autoresume"]:
             # unpause everything
             for torrent in paused:
                 resume(torrent, qbt_client)
                 total_paused = total_paused = torrent.amount_left
                 total_active = total_active + torrent.amount.left
-            return
 
-        # Otherwise do a piecemeal check to see if we can resume
-        # any currently paused torrents
-        if total_active < free:
+    # Otherwise do a piecemeal check to see if we can resume
+    # any currently paused torrents, if currently active would
+    # not fill the free space
+    elif total_active < free:
+        if params["autoresume"]:
             # Check to see if we can resume anything paused, starting
             # with the torrents with the least remaining
             for torrent in sorted(paused, key=lambda k: k['amount_left']):
@@ -122,18 +131,18 @@ def check_all_incomplete(incomplete, qbt_client, params):
                     resume(torrent, qbt_client)
                     total_active = total_active + torrent.amount_left
                     total_paused = total_paused - torrent.amount_left
-            return
 
     # Finally we have more active than free so must pause some
     # Start with the ones with the most remaining
-    for torrent in sorted(active, key=lambda k: k['amount_left'], reverse=True):
-        pause(torrent, qbt_client)
-        total_active = total_active - torrent.amount_left
-        total_paused = total_paused + torrent.amount_left
+    else:
+        for torrent in sorted(active, key=lambda k: k['amount_left'], reverse=True):
+            pause(torrent, qbt_client)
+            total_active = total_active - torrent.amount_left
+            total_paused = total_paused + torrent.amount_left
 
-        # We only need to pause enough to get under free space
-        if total_active < free:
-            break
+            # We only need to pause enough to get under free space
+            if total_active < free:
+                break
 
 
 def do_work(params):
@@ -179,8 +188,8 @@ def do_work(params):
         # Some other states to ignore
         if 'checking' in torrent.state:
             logging.info('skipping %s - %s: %s [%s %.2f]',
-                         torrent.category, torrent.hash[-6:], {torrent.name}, torrent.state,
-                         torrent.progress)
+                         torrent.category, torrent.hash[-6:], {torrent.name},
+                         torrent.state, torrent.progress)
             continue
 
         # If there is no tracker then try re-announcing...
@@ -189,6 +198,24 @@ def do_work(params):
                          torrent.category, torrent.hash[-6:], {torrent.name}, torrent.state)
             qbt_client.torrents_reannounce(torrent_hashes=torrent.hash)
             continue
+
+        # Optionally tag torrents that aren't already tagged
+        if len(torrent.tags) == 0 and params["tracker_tags"]:
+            match = False
+            for tracker, tag in params["tracker_tags"].items():
+                if tracker in torrent.tracker:
+                    logging.info('match %s (%s) - %s: %s',
+                                 torrent.category, tag, torrent.hash[-6:], {torrent.name})
+                    qbt_client.torrents_add_tags(tags=tag, torrent_hashes=torrent.hash)
+                    match = True
+                    break
+
+            if not match:
+                logging.error('no match - %s: %s %s',
+                              torrent.hash[-6:],
+                              torrent.name,
+                              torrent.tracker)
+                # qbt_client.torrents_add_tags(tags='unknown', torrent_hashes=torrent.hash)
 
     # Check incomplete torrents aren't going to blow disk space
     check_all_incomplete(incomplete, qbt_client, params)
